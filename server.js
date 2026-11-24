@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { publicFirebaseConfig } from './lib/firebase-admin.js';
 import { optionalAuth, requireAdmin, requireAuth } from './middleware/auth.js';
@@ -83,6 +84,24 @@ app.use((_req, res, next) => {
 app.use(express.json({ limit: '1mb' }));
 
 // Static frontend assets (pure HTML, CSS, JS, images) and local Firebase browser SDK
+const FIREBASE_AUTH_PATH = path.resolve(process.cwd(), 'node_modules/firebase/firebase-auth.js');
+let cachedFirebaseAuthJs = null;
+
+app.get('/vendor/firebase-auth.js', (_req, res, next) => {
+  try {
+    if (!cachedFirebaseAuthJs) {
+      const raw = fs.readFileSync(FIREBASE_AUTH_PATH, 'utf8');
+      cachedFirebaseAuthJs = raw.replace(
+        /https:\/\/www\.gstatic\.com\/firebasejs\/[^/]+\/firebase-app\.js/g,
+        '/vendor/firebase-app.js',
+      );
+    }
+    res.type('application/javascript; charset=utf-8').send(cachedFirebaseAuthJs);
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.use('/vendor', express.static(path.resolve(process.cwd(), 'node_modules/firebase')));
 app.use(express.static(path.resolve(process.cwd(), 'public')));
 

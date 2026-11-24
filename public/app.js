@@ -1,11 +1,4 @@
-import { initializeApp } from 'firebase/app';
-import {
-  getAuth,
-  GoogleAuthProvider,
-  onIdTokenChanged,
-  signInWithPopup,
-  signOut as firebaseSignOut,
-} from 'firebase/auth';
+let firebaseAuthModule = null;
 
 const CATEGORIES = [
   { id: 'animals', label: 'Животные', description: 'Здоровые питомцы с ветпаспортом и рекомендациями по содержанию' },
@@ -253,12 +246,16 @@ async function syncAccountWithToken(token) {
 }
 
 async function signInWithGoogle() {
-  if (!state.auth || !state.provider) return;
+  if (!state.auth || !state.provider || !firebaseAuthModule) {
+    state.authError = 'Сервис авторизации ещё загружается или недоступен.';
+    renderAccountBar();
+    return;
+  }
   state.authError = null;
   state.authBusy = true;
   renderAll();
   try {
-    const cred = await signInWithPopup(state.auth, state.provider);
+    const cred = await firebaseAuthModule.signInWithPopup(state.auth, state.provider);
     const token = await cred.user.getIdToken();
     state.idToken = token;
     await syncAccountWithToken(token);
@@ -275,12 +272,12 @@ async function signInWithGoogle() {
 }
 
 async function signOut() {
-  if (!state.auth) return;
+  if (!state.auth || !firebaseAuthModule) return;
   state.authBusy = true;
   state.authError = null;
   renderAll();
   try {
-    await firebaseSignOut(state.auth);
+    await firebaseAuthModule.signOut(state.auth);
     state.idToken = null;
     state.account = null;
     state.customerPreview = false;
@@ -2722,6 +2719,57 @@ function renderAll() {
 }
 
 // --- Bootstrap ---
+async function initFirebaseAuth() {
+  try {
+    const [firebaseConfig, appMod, authMod] = await Promise.all([
+      apiJson('/api/firebase-config'),
+      import('/vendor/firebase-app.js'),
+      import('/vendor/firebase-auth.js'),
+    ]);
+    firebaseAuthModule = authMod;
+    const firebaseApp = appMod.initializeApp(firebaseConfig);
+    state.auth = authMod.getAuth(firebaseApp);
+    state.provider = new authMod.GoogleAuthProvider();
+
+    let firstAuthEvent = true;
+    authMod.onIdTokenChanged(state.auth, async (user) => {
+      state.firebaseUser = user;
+      if (!user) {
+        const hadAccount = Boolean(state.account);
+        state.idToken = null;
+        state.account = null;
+        state.customerPreview = false;
+        state.activeTab = 'catalog';
+        state.authReady = true;
+        if (!firstAuthEvent || hadAccount) {
+          await fetchStore();
+        } else {
+          renderAll();
+        }
+        firstAuthEvent = false;
+        return;
+      }
+
+      firstAuthEvent = false;
+      try {
+        const token = await user.getIdToken();
+        state.idToken = token;
+        await syncAccountWithToken(token);
+      } catch (err) {
+        console.error('Auth sync error:', err);
+        state.account = null;
+      } finally {
+        state.authReady = true;
+        await fetchStore();
+      }
+    });
+  } catch (err) {
+    console.error('Firebase init failed:', err);
+    state.authReady = true;
+    renderAccountBar();
+  }
+}
+
 async function init() {
   document.getElementById('brandBtn').addEventListener('click', () => setActiveTab('catalog'));
   document.getElementById('openCartBtn').addEventListener('click', openCart);
@@ -2740,43 +2788,15 @@ async function init() {
     }
   });
 
+  state.authReady = true;
   renderAll();
 
-  try {
-    const firebaseConfig = await apiJson('/api/firebase-config');
-    const firebaseApp = initializeApp(firebaseConfig);
-    state.auth = getAuth(firebaseApp);
-    state.provider = new GoogleAuthProvider();
-
-    onIdTokenChanged(state.auth, async (user) => {
-      state.firebaseUser = user;
-      if (!user) {
-        state.idToken = null;
-        state.account = null;
-        state.customerPreview = false;
-        state.activeTab = 'catalog';
-        state.authReady = true;
-        await fetchStore();
-        return;
-      }
-
-      try {
-        const token = await user.getIdToken();
-        state.idToken = token;
-        await syncAccountWithToken(token);
-      } catch (err) {
-        console.error('Auth sync error:', err);
-        state.account = null;
-      } finally {
-        state.authReady = true;
-        await fetchStore();
-      }
-    });
-  } catch (err) {
-    console.error('Firebase init failed:', err);
-    state.authReady = true;
-    await fetchStore();
-  }
+  await fetchStore();
+  void initFirebaseAuth();
 }
+
+window.addEventListener('error', (event) => {
+  console.error('Client error:', event.error || event.message);
+});
 
 void init();
