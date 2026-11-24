@@ -5,9 +5,10 @@
 ## Структура проекта
 
 ```text
+├── start.bat                        # Батник для запуска на Windows (двойной клик или CMD)
 ├── bin/
 │   ├── lapa-i-dom                   # Исполняемый CLI-бинарник запуска (--port, --check, --init-db)
-│   └── start.sh                     # Bash-обёртка для запуска в один клик
+│   └── start.sh                     # Bash-обёртка для запуска на Linux/macOS
 ├── server.js                        # Express-сервер (порт 3000), API и раздача статики
 ├── package.json                     # Зависимости (express, pg, firebase, firebase-admin, dotenv) и bin
 ├── firebase-applet-config.json      # Конфигурация Firebase Auth
@@ -27,21 +28,15 @@
     └── images/                      # Графические ассеты категорий и баннера
 ```
 
-## Запуск через бинку
+## Запуск
 
-1. Установите зависимости:
-   ```bash
-   npm install
-   ```
-2. Скопируйте `.env.example` в `.env` и заполните параметры подключения к PostgreSQL (`SQL_HOST`, `SQL_DB_NAME`, `SQL_USER`, `SQL_PASSWORD`).
-3. Проверьте окружение и синтаксис:
+1. Скопируйте `.env.example` в `.env` и заполните параметры подключения к PostgreSQL (`SQL_HOST`, `SQL_DB_NAME`, `SQL_USER`, `SQL_PASSWORD`).
+2. **На Windows**: запустите **`start.bat`** (двойным кликом или в командной строке, поддерживаются флаги например `start.bat --with-init --port 3000`). При первом запуске батник сам установит зависимости.
+3. **На Linux / macOS**:
    ```bash
    ./bin/lapa-i-dom --check
-   ```
-4. Запустите приложение через бинку (или `./bin/start.sh`):
-   ```bash
    ./bin/lapa-i-dom
-   # или на другом порту с автоматической проверкой схемы БД:
-   ./bin/lapa-i-dom --with-init --port 3000
+   # или через shell-скрипт:
+   ./bin/start.sh
    ```
    Также доступен стандартный запуск через npm: `npm run dev` или `npm start`.
