@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_phone TEXT NOT NULL,
   delivery_address TEXT NOT NULL,
   payment_method TEXT NOT NULL,
+  payment_status TEXT NOT NULL DEFAULT 'Ожидает оплаты' CHECK (payment_status IN ('Ожидает оплаты', 'Оплачен клиентом', 'Оплата при получении')),
+  payment_confirmed_at TEXT,
   status TEXT NOT NULL DEFAULT 'В обработке' CHECK (status IN ('В обработке', 'Выполнен', 'Доставлен', 'Отменён')),
   total_amount INTEGER NOT NULL CHECK (total_amount >= 0),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))

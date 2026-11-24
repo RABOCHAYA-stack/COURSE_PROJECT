@@ -65,6 +65,8 @@ const state = {
   cartOpen: false,
   completedOrder: null,
   cartError: null,
+  checkoutStep: 'form',
+  checkoutDraft: null,
 };
 
 // --- Safe DOM Helper ---
@@ -79,7 +81,7 @@ function el(tag, attrs = {}, ...children) {
         node.addEventListener(key.slice(2).toLowerCase(), val);
       } else if (key === 'value' && ('value' in node)) {
         node.value = val;
-      } else if (key === 'disabled' || key === 'required' || key === 'selected') {
+      } else if (key === 'disabled' || key === 'required' || key === 'selected' || key === 'checked') {
         if (val) node[key] = true;
       } else {
         node.setAttribute(key, String(val));
@@ -277,6 +279,15 @@ function openAuthModal(defaultMode) {
   );
   const submitBtn = el('button', { type: 'submit', className: 'btn-primary' }, 'Войти');
 
+  function updateSubmitLabel() {
+    const isReg = mode === 'register';
+    submitBtn.textContent = isReg
+      ? state.needsAdminSetup
+        ? 'Создать администратора'
+        : 'Зарегистрироваться'
+      : 'Войти';
+  }
+
   function syncMode() {
     const isReg = mode === 'register';
     loginTabBtn.className = `seg-btn ${!isReg ? 'active' : ''}`;
@@ -284,11 +295,7 @@ function openAuthModal(defaultMode) {
     nameField.classList.toggle('hidden', !isReg);
     nameInput.required = isReg;
     passInput.setAttribute('autocomplete', isReg ? 'new-password' : 'current-password');
-    submitBtn.textContent = isReg
-      ? state.needsAdminSetup
-        ? 'Создать администратора'
-        : 'Зарегистрироваться'
-      : 'Войти';
+    updateSubmitLabel();
     errBox.classList.add('hidden');
   }
 
@@ -348,12 +355,14 @@ function openAuthModal(defaultMode) {
       showToast(`Добро пожаловать, ${data.account.displayName || data.account.email}`);
       await fetchStore();
     } catch (err) {
-      errBox.textContent = err instanceof Error ? err.message : 'Не удалось выполнить вход.';
+      const errMsg = err instanceof Error ? err.message : 'Не удалось выполнить вход.';
+      errBox.textContent = errMsg;
       errBox.classList.remove('hidden');
-      syncMode();
+      showToast(errMsg, true);
     } finally {
       state.authBusy = false;
       submitBtn.disabled = false;
+      updateSubmitLabel();
     }
   });
 
@@ -388,6 +397,8 @@ async function signOut() {
     state.account = null;
     state.customerPreview = false;
     state.activeTab = 'catalog';
+    state.checkoutStep = 'form';
+    state.checkoutDraft = null;
     state.orders = [];
     state.myOrders = [];
     state.suppliers = [];
@@ -460,6 +471,9 @@ function updateCartQty(productId, nextQty) {
 
 function removeFromCart(productId) {
   state.cart = state.cart.filter((c) => c.product.id !== productId);
+  if (state.cart.length === 0) {
+    state.checkoutStep = 'form';
+  }
   renderAll();
 }
 
@@ -473,7 +487,104 @@ function closeCart() {
   state.cartOpen = false;
   state.completedOrder = null;
   state.cartError = null;
+  state.checkoutStep = 'form';
+  state.checkoutDraft = null;
   renderCart();
+}
+
+function getPaymentStatusMeta(order) {
+  const status = order?.paymentStatus || 'Ожидает оплаты';
+  if (status === 'Оплачен клиентом') {
+    return { label: 'Оплата подтверждена клиентом', cls: 'stock-ok' };
+  }
+  if (status === 'Оплата при получении') {
+    return { label: 'Оплата при получении', cls: '' };
+  }
+  return { label: 'Ожидает подтверждения оплаты', cls: 'stock-low' };
+}
+
+function openConfirmPaymentModal(order) {
+  const errBox = el('div', { className: 'alert-error hidden' });
+  const confirmCheckbox = el('input', { type: 'checkbox', required: true });
+  const submitBtn = el(
+    'button',
+    { type: 'submit', className: 'btn-primary' },
+    `Подтвердить оплату · ${formatRub(order.totalAmount)}`,
+  );
+
+  const form = el(
+    'form',
+    { className: 'form-stack' },
+    el(
+      'div',
+      { className: 'table-card', style: 'padding:14px; background:#fafafa; display:flex; flex-direction:column; gap:6px; font-size:0.8125rem;' },
+      el('div', { style: 'display:flex; justify-content:space-between;' }, el('span', { style: 'color:var(--ink-muted);' }, 'Заказ'), el('strong', { className: 'font-mono' }, order.orderNumber)),
+      el('div', { style: 'display:flex; justify-content:space-between;' }, el('span', { style: 'color:var(--ink-muted);' }, 'Способ'), el('span', null, order.paymentMethod)),
+      el('div', { style: 'display:flex; justify-content:space-between; border-top:1px solid var(--border); padding-top:8px; margin-top:4px;' }, el('span', { style: 'font-weight:500;' }, 'Сумма к оплате'), el('strong', { className: 'font-mono tabular-nums', style: 'font-size:1rem;' }, formatRub(order.totalAmount))),
+    ),
+    el(
+      'label',
+      { className: 'checkbox-row' },
+      confirmCheckbox,
+      el('span', null, `Подтверждаю оплату заказа ${order.orderNumber} на сумму ${formatRub(order.totalAmount)}.`),
+    ),
+    el(
+      'div',
+      { className: 'modal-actions' },
+      el('button', { type: 'button', className: 'btn-secondary', onClick: closeModal }, 'Отмена'),
+      submitBtn,
+    ),
+  );
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!confirmCheckbox.checked) {
+      errBox.textContent = 'Отметьте подтверждение оплаты перед отправкой.';
+      errBox.classList.remove('hidden');
+      return;
+    }
+    errBox.classList.add('hidden');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Подтверждение...';
+    try {
+      const res = await apiJson(`/api/orders/${order.id}/confirm-payment`, {
+        method: 'POST',
+      });
+      state.myOrders = state.myOrders.map((o) => (o.id === res.order.id ? res.order : o));
+      state.orders = state.orders.map((o) => (o.id === res.order.id ? res.order : o));
+      if (state.completedOrder?.id === res.order.id) {
+        state.completedOrder = res.order;
+      }
+      closeModal();
+      showToast(`Оплата по заказу ${res.order.orderNumber} подтверждена`);
+      renderAll();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Не удалось подтвердить оплату.';
+      errBox.textContent = msg;
+      errBox.classList.remove('hidden');
+      showToast(msg, true);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = `Подтвердить оплату · ${formatRub(order.totalAmount)}`;
+    }
+  });
+
+  openModal(
+    el(
+      'div',
+      { className: 'form-stack' },
+      el(
+        'div',
+        { style: 'display:flex; justify-content:space-between; align-items:center; gap:12px;' },
+        el('h3', { style: 'font-size:1.125rem; font-weight:600;' }, 'Подтверждение оплаты'),
+        el('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Закрыть', onClick: closeModal }, '×'),
+      ),
+      errBox,
+      form,
+    ),
+    true,
+    'Подтверждение оплаты заказа',
+  );
 }
 
 // --- Modal Helper ---
@@ -1700,7 +1811,7 @@ function renderOrdersView(root) {
         onClick: () => {
           downloadCsv(
             'istoriya-pokupok.csv',
-            ['Номер заказа', 'Дата', 'Покупатель', 'Телефон', 'Адрес доставки', 'Оплата', 'Статус', 'Сумма ₽'],
+            ['Номер заказа', 'Дата', 'Покупатель', 'Телефон', 'Адрес доставки', 'Оплата', 'Статус оплаты', 'Статус', 'Сумма ₽'],
             state.orders.map((o) => [
               o.orderNumber,
               formatDateRu(o.createdAt),
@@ -1708,6 +1819,7 @@ function renderOrdersView(root) {
               o.customerPhone,
               o.deliveryAddress,
               o.paymentMethod,
+              o.paymentStatus || 'Ожидает оплаты',
               o.status,
               o.totalAmount,
             ]),
@@ -1951,7 +2063,12 @@ function updateOrdersListOnly() {
             el('span', { className: statusCls, style: 'font-weight:500;' }, order.status),
           ),
           el('div', { style: 'font-family:var(--font-display); font-weight:600; font-size:1rem;' }, order.customerName, el('span', { style: 'font-family:var(--font-sans); font-weight:400; font-size:0.875rem; color:var(--ink-muted); margin-left:8px;' }, order.customerPhone)),
-          el('div', { style: 'font-size:0.75rem; color:var(--ink-muted);' }, `${order.deliveryAddress} · ${order.paymentMethod}`),
+          el(
+            'div',
+            { style: 'font-size:0.75rem; color:var(--ink-muted);' },
+            `${order.deliveryAddress} · ${order.paymentMethod} · `,
+            el('span', { className: getPaymentStatusMeta(order).cls, style: 'font-weight:500;' }, getPaymentStatusMeta(order).label),
+          ),
         ),
         el(
           'div',
@@ -2406,6 +2523,9 @@ function renderCart() {
 
   if (state.completedOrder) {
     const ord = state.completedOrder;
+    const payMeta = getPaymentStatusMeta(ord);
+    const canConfirmPayment =
+      ord.paymentStatus !== 'Оплачен клиентом' && ord.status !== 'Отменён';
     titleEl.textContent = 'Заказ подтверждён';
 
     const itemsRows = ord.items.map((it) =>
@@ -2418,12 +2538,24 @@ function renderCart() {
     );
 
     const actionButtons = [
-      isEffectiveAdmin()
+      canConfirmPayment
         ? el(
             'button',
             {
               type: 'button',
               className: 'btn-primary',
+              style: 'flex:1;',
+              onClick: () => openConfirmPaymentModal(ord),
+            },
+            'Подтвердить оплату',
+          )
+        : null,
+      isEffectiveAdmin()
+        ? el(
+            'button',
+            {
+              type: 'button',
+              className: canConfirmPayment ? 'btn-secondary' : 'btn-primary',
               style: 'flex:1;',
               onClick: () => {
                 closeCart();
@@ -2437,7 +2569,7 @@ function renderCart() {
               'button',
               {
                 type: 'button',
-                className: 'btn-primary',
+                className: canConfirmPayment ? 'btn-secondary' : 'btn-primary',
                 style: 'flex:1;',
                 onClick: () => {
                   closeCart();
@@ -2459,7 +2591,7 @@ function renderCart() {
         'div',
         { className: 'alert-success' },
         el('div', { style: 'font-family:var(--font-display); font-weight:600;' }, `Заказ ${ord.orderNumber} принят в работу`),
-        el('p', { style: 'font-size:0.8125rem; color:var(--ink-secondary); margin-top:4px;' }, 'Благодарим за покупку! Товары зарезервированы на складе и переданы в сборку.'),
+        el('p', { style: 'font-size:0.8125rem; color:var(--ink-secondary); margin-top:4px;' }, ord.paymentStatus === 'Оплачен клиентом' ? 'Оплата подтверждена. Товары зарезервированы на складе и переданы в сборку.' : 'Товары зарезервированы на складе и переданы в сборку.'),
       ),
       el(
         'div',
@@ -2470,7 +2602,12 @@ function renderCart() {
           el('div', { style: 'color:var(--ink-muted);' }, 'Получатель'),
           el('div', { style: 'font-weight:600; margin-top:2px;' }, `${ord.customerName} · ${ord.customerPhone}`),
           el('div', { style: 'color:var(--ink-secondary); margin-top:2px;' }, ord.deliveryAddress),
-          el('div', { style: 'color:var(--ink-muted); font-size:0.75rem; margin-top:4px;' }, `Оплата: ${ord.paymentMethod}`),
+          el(
+            'div',
+            { style: 'color:var(--ink-muted); font-size:0.75rem; margin-top:4px;' },
+            `Оплата: ${ord.paymentMethod} · `,
+            el('span', { className: payMeta.cls, style: 'font-weight:500;' }, payMeta.label),
+          ),
         ),
         el('div', { style: 'display:flex; flex-direction:column; gap:8px;' }, ...itemsRows),
         el(
@@ -2576,11 +2713,144 @@ function renderCart() {
   }
 
   const errBox = el('div', { className: `alert-error ${state.cartError ? '' : 'hidden'}` }, state.cartError || '');
-  const nameInput = el('input', { type: 'text', className: 'input', value: state.account.displayName || '', placeholder: 'Например, Анна Смирнова', required: true });
-  const phoneInput = el('input', { type: 'tel', className: 'input', placeholder: '+7 (999) 123-45-67', required: true });
-  const addrInput = el('input', { type: 'text', className: 'input', placeholder: 'Город, улица, дом, квартира', required: true });
-  const paySelect = el('select', { className: 'select' }, ...PAYMENT_METHODS.map((pm) => el('option', { value: pm }, pm)));
-  const submitBtn = el('button', { type: 'submit', className: 'btn-primary', style: 'width:100%; padding:12px 16px;' }, `Оформить заказ · ${formatRub(subtotal)}`);
+
+  async function submitCheckoutOrder(draft, paymentConfirmed, primaryBtn, altBtn) {
+    state.cartError = null;
+    errBox.classList.add('hidden');
+    if (primaryBtn) primaryBtn.disabled = true;
+    if (altBtn) altBtn.disabled = true;
+    try {
+      const res = await apiJson('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          customerName: draft.customerName,
+          customerPhone: draft.customerPhone,
+          deliveryAddress: draft.deliveryAddress,
+          paymentMethod: draft.paymentMethod,
+          paymentConfirmed,
+          items: state.cart.map((c) => ({ productId: c.product.id, quantity: c.quantity })),
+        }),
+      });
+      if (isTrueAdmin()) {
+        state.orders = [res.order, ...state.orders];
+        state.movements = res.stockMovements;
+      }
+      state.myOrders = [res.order, ...state.myOrders];
+      state.expandedMyOrderId = res.order.id;
+      state.products = res.products;
+      state.cart = [];
+      state.checkoutStep = 'form';
+      state.checkoutDraft = null;
+      state.completedOrder = res.order;
+      showToast(
+        paymentConfirmed
+          ? `Заказ ${res.order.orderNumber} оплачен и оформлен`
+          : `Заказ ${res.order.orderNumber} оформлен`,
+      );
+      renderAll();
+    } catch (err) {
+      state.cartError = err instanceof Error ? err.message : 'Не удалось оформить заказ.';
+      errBox.textContent = state.cartError;
+      errBox.classList.remove('hidden');
+      showToast(state.cartError, true);
+    } finally {
+      if (primaryBtn) primaryBtn.disabled = false;
+      if (altBtn) altBtn.disabled = false;
+    }
+  }
+
+  if (state.checkoutStep === 'confirm' && state.checkoutDraft) {
+    const draft = state.checkoutDraft;
+    const isOnline = draft.paymentMethod === 'Онлайн-оплата';
+    const confirmCheckbox = el('input', { type: 'checkbox', checked: true });
+    const confirmBtn = el(
+      'button',
+      { type: 'submit', className: 'btn-primary', style: 'width:100%; padding:12px 16px;' },
+      isOnline
+        ? `Подтвердить оплату · ${formatRub(subtotal)}`
+        : `Подтвердить и оформить заказ · ${formatRub(subtotal)}`,
+    );
+    const payLaterBtn = isOnline
+      ? el(
+          'button',
+          {
+            type: 'button',
+            className: 'btn-secondary',
+            style: 'width:100%;',
+            onClick: () => void submitCheckoutOrder(draft, false, confirmBtn, payLaterBtn),
+          },
+          'Оформить и оплатить позже',
+        )
+      : null;
+
+    const confirmForm = el(
+      'form',
+      { className: 'form-stack', style: 'border-top:1px solid var(--border); padding-top:16px;' },
+      el('h3', { style: 'font-size:0.875rem; font-weight:600;' }, 'Подтверждение оплаты со стороны клиента'),
+      errBox,
+      el(
+        'div',
+        { className: 'table-card', style: 'padding:14px; background:#fafafa; display:flex; flex-direction:column; gap:6px; font-size:0.8125rem;' },
+        el('div', null, el('span', { style: 'color:var(--ink-muted);' }, 'Получатель: '), el('strong', null, `${draft.customerName} (${draft.customerPhone})`)),
+        el('div', null, el('span', { style: 'color:var(--ink-muted);' }, 'Адрес: '), draft.deliveryAddress),
+        el('div', null, el('span', { style: 'color:var(--ink-muted);' }, 'Способ оплаты: '), el('strong', null, draft.paymentMethod)),
+        el('div', { style: 'border-top:1px solid var(--border); padding-top:8px; margin-top:4px; display:flex; justify-content:space-between; align-items:center;' }, el('span', { style: 'font-weight:500;' }, 'Сумма к оплате'), el('strong', { className: 'font-mono tabular-nums', style: 'font-size:1.0625rem;' }, formatRub(subtotal))),
+      ),
+      el(
+        'label',
+        { className: 'checkbox-row' },
+        confirmCheckbox,
+        el(
+          'span',
+          null,
+          isOnline
+            ? `Я подтверждаю оплату заказа на сумму ${formatRub(subtotal)} и передачу его в сборку.`
+            : `Я подтверждаю оформление заказа и оплату суммы ${formatRub(subtotal)} (${draft.paymentMethod}).`,
+        ),
+      ),
+      confirmBtn,
+      payLaterBtn,
+      el(
+        'button',
+        {
+          type: 'button',
+          className: 'btn-secondary',
+          style: 'width:100%;',
+          onClick: () => {
+            state.checkoutStep = 'form';
+            state.cartError = null;
+            renderCart();
+          },
+        },
+        '← Изменить данные доставки',
+      ),
+    );
+
+    confirmForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!confirmCheckbox.checked) {
+        state.cartError = 'Отметьте согласие для подтверждения оплаты заказа.';
+        errBox.textContent = state.cartError;
+        errBox.classList.remove('hidden');
+        return;
+      }
+      void submitCheckoutOrder(draft, isOnline, confirmBtn, payLaterBtn);
+    });
+
+    body.replaceChildren(deliveryNote, itemsList, confirmForm);
+    return;
+  }
+
+  const draft = state.checkoutDraft || {};
+  const nameInput = el('input', { type: 'text', className: 'input', value: draft.customerName ?? (state.account.displayName || ''), placeholder: 'Например, Анна Смирнова', required: true });
+  const phoneInput = el('input', { type: 'tel', className: 'input', value: draft.customerPhone || '', placeholder: '+7 (999) 123-45-67', required: true });
+  const addrInput = el('input', { type: 'text', className: 'input', value: draft.deliveryAddress || '', placeholder: 'Город, улица, дом, квартира', required: true });
+  const paySelect = el(
+    'select',
+    { className: 'select' },
+    ...PAYMENT_METHODS.map((pm) => el('option', { value: pm, selected: draft.paymentMethod === pm }, pm)),
+  );
+  const submitBtn = el('button', { type: 'submit', className: 'btn-primary', style: 'width:100%; padding:12px 16px;' }, `Перейти к подтверждению · ${formatRub(subtotal)}`);
 
   const form = el(
     'form',
@@ -2595,41 +2865,17 @@ function renderCart() {
     submitBtn,
   );
 
-  form.addEventListener('submit', async (e) => {
+  form.addEventListener('submit', (e) => {
     e.preventDefault();
     state.cartError = null;
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Оформление заказа...';
-    try {
-      const res = await apiJson('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          customerName: nameInput.value,
-          customerPhone: phoneInput.value,
-          deliveryAddress: addrInput.value,
-          paymentMethod: paySelect.value,
-          items: state.cart.map((c) => ({ productId: c.product.id, quantity: c.quantity })),
-        }),
-      });
-      if (isTrueAdmin()) {
-        state.orders = [res.order, ...state.orders];
-        state.movements = res.stockMovements;
-      }
-      state.myOrders = [res.order, ...state.myOrders];
-      state.expandedMyOrderId = res.order.id;
-      state.products = res.products;
-      state.cart = [];
-      state.completedOrder = res.order;
-      showToast(`Заказ ${res.order.orderNumber} оформлен`);
-      renderAll();
-    } catch (err) {
-      state.cartError = err instanceof Error ? err.message : 'Не удалось оформить заказ.';
-      errBox.textContent = state.cartError;
-      errBox.classList.remove('hidden');
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = `Оформить заказ · ${formatRub(subtotal)}`;
-    }
+    state.checkoutDraft = {
+      customerName: nameInput.value.trim(),
+      customerPhone: phoneInput.value.trim(),
+      deliveryAddress: addrInput.value.trim(),
+      paymentMethod: paySelect.value,
+    };
+    state.checkoutStep = 'confirm';
+    renderCart();
   });
 
   body.replaceChildren(deliveryNote, itemsList, form);
@@ -2767,7 +3013,12 @@ function renderMyOrdersView(root) {
             el('span', { className: statusCls, style: 'font-weight:500;' }, order.status),
           ),
           el('div', { style: 'font-weight:600; font-size:0.9375rem;' }, order.deliveryAddress),
-          el('div', { style: 'font-size:0.75rem; color:var(--ink-muted);' }, `${order.customerName} · ${order.customerPhone} · ${order.paymentMethod}`),
+          el(
+            'div',
+            { style: 'font-size:0.75rem; color:var(--ink-muted);' },
+            `${order.customerName} · ${order.customerPhone} · ${order.paymentMethod} · `,
+            el('span', { className: getPaymentStatusMeta(order).cls, style: 'font-weight:500;' }, getPaymentStatusMeta(order).label),
+          ),
         ),
         el(
           'div',
@@ -2778,6 +3029,17 @@ function renderMyOrdersView(root) {
             el('div', { className: 'font-mono tabular-nums', style: 'font-size:1.125rem; font-weight:600;' }, formatRub(order.totalAmount)),
             el('div', { className: 'tabular-nums', style: 'font-size:0.75rem; color:var(--ink-muted);' }, `Позиций: ${order.items.reduce((s, i) => s + i.quantity, 0)}`),
           ),
+          order.paymentStatus !== 'Оплачен клиентом' && order.status !== 'Отменён'
+            ? el(
+                'button',
+                {
+                  type: 'button',
+                  className: 'btn-primary btn-sm',
+                  onClick: () => openConfirmPaymentModal(order),
+                },
+                'Подтвердить оплату',
+              )
+            : null,
           el(
             'button',
             {

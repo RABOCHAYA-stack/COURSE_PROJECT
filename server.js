@@ -6,6 +6,7 @@ import { optionalAuth, requireAdmin, requireAuth } from './middleware/auth.js';
 import {
   adjustProductStock,
   authenticateUser,
+  confirmOrderPayment,
   createOrder,
   createProduct,
   createSupplier,
@@ -127,7 +128,9 @@ app.post('/api/auth/register', async (req, res) => {
     res.status(201).json({ token, account });
   } catch (err) {
     if (err instanceof Error && err.message === 'EMAIL_EXISTS') {
-      res.status(409).json({ error: 'Пользователь с таким email уже зарегистрирован.' });
+      res.status(409).json({
+        error: 'Такая почта уже зарегистрирована. Войдите в аккаунт или укажите другой email.',
+      });
       return;
     }
     res.status(500).json({
@@ -148,7 +151,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const record = await authenticateUser(email);
     if (!record || !verifyPassword(password, record.passwordHash)) {
-      res.status(401).json({ error: 'Неверный email или пароль.' });
+      res.status(401).json({ error: 'Неверный логин (email) или пароль.' });
       return;
     }
     const token = issueSessionToken(record.user);
@@ -737,6 +740,7 @@ app.post('/api/orders', requireAuth, async (req, res) => {
       customerPhone,
       deliveryAddress,
       paymentMethod,
+      paymentConfirmed: Boolean(body.paymentConfirmed),
       items,
     });
 
@@ -763,6 +767,35 @@ app.post('/api/orders', requireAuth, async (req, res) => {
     }
     res.status(500).json({
       error: err instanceof Error ? err.message : 'Не удалось оформить заказ.',
+    });
+  }
+});
+
+app.post('/api/orders/:id/confirm-payment', requireAuth, async (req, res) => {
+  const orderId = parsePositiveInt(req.params.id);
+  if (!orderId) {
+    res.status(400).json({ error: 'Некорректный номер заказа.' });
+    return;
+  }
+
+  try {
+    const order = await confirmOrderPayment(orderId, req.account.uid);
+    if (!order) {
+      res.status(404).json({ error: 'Заказ не найден.' });
+      return;
+    }
+    res.json({ order });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'ORDER_FORBIDDEN') {
+      res.status(403).json({ error: 'Подтвердить оплату может только владелец заказа.' });
+      return;
+    }
+    if (err instanceof Error && err.message === 'ORDER_CANCELLED') {
+      res.status(409).json({ error: 'Нельзя подтвердить оплату по отменённому заказу.' });
+      return;
+    }
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Не удалось подтвердить оплату заказа.',
     });
   }
 });
