@@ -1,5 +1,3 @@
-let firebaseAuthModule = null;
-
 const CATEGORIES = [
   { id: 'animals', label: 'Животные', description: 'Здоровые питомцы с ветпаспортом и рекомендациями по содержанию' },
   { id: 'supplies', label: 'Товары для животных', description: 'Лежанки, переноски, когтеточки, миски, игрушки и амуниция' },
@@ -24,12 +22,10 @@ const ORDER_STATUSES = ['В обработке', 'Выполнен', 'Доста
 const PAYMENT_METHODS = ['Картой при получении', 'Онлайн-оплата', 'Наличными курьеру'];
 
 const state = {
-  auth: null,
-  provider: null,
-  firebaseUser: null,
   idToken: null,
   account: null,
-  authReady: false,
+  needsAdminSetup: false,
+  authReady: true,
   authBusy: false,
   authError: null,
   customerPreview: false,
@@ -233,56 +229,172 @@ async function apiJson(url, options = {}) {
 }
 
 // --- Auth Actions ---
-async function syncAccountWithToken(token) {
-  const res = await fetch('/api/auth/me', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Не удалось подтвердить профиль.');
-  }
-  const data = await res.json();
-  state.account = data.account;
-}
+function openAuthModal(defaultMode) {
+  let mode = defaultMode || (state.needsAdminSetup ? 'register' : 'login');
+  const errBox = el('div', { className: 'alert-error hidden' });
 
-async function signInWithGoogle() {
-  if (!state.auth || !state.provider || !firebaseAuthModule) {
-    state.authError = 'Сервис авторизации ещё загружается или недоступен.';
-    renderAccountBar();
-    return;
+  const nameInput = el('input', {
+    type: 'text',
+    className: 'input',
+    placeholder: 'Например, Анна Смирнова',
+    autocomplete: 'name',
+  });
+  const nameField = el(
+    'div',
+    null,
+    el('label', { className: 'field-label' }, 'Имя и фамилия'),
+    nameInput,
+  );
+
+  const emailInput = el('input', {
+    type: 'email',
+    className: 'input',
+    placeholder: 'name@example.ru',
+    autocomplete: 'email',
+    required: true,
+  });
+  const passInput = el('input', {
+    type: 'password',
+    className: 'input',
+    placeholder: 'Не менее 6 символов',
+    minLength: 6,
+    required: true,
+  });
+
+  const setupHint = state.needsAdminSetup
+    ? el(
+        'div',
+        { className: 'alert-success', style: 'font-size:0.8125rem;' },
+        'Первый зарегистрированный пользователь получит права администратора магазина.',
+      )
+    : null;
+
+  const loginTabBtn = el('button', { type: 'button', className: 'seg-btn' }, 'Вход');
+  const regTabBtn = el(
+    'button',
+    { type: 'button', className: 'seg-btn' },
+    state.needsAdminSetup ? 'Создать администратора' : 'Регистрация',
+  );
+  const submitBtn = el('button', { type: 'submit', className: 'btn-primary' }, 'Войти');
+
+  function syncMode() {
+    const isReg = mode === 'register';
+    loginTabBtn.className = `seg-btn ${!isReg ? 'active' : ''}`;
+    regTabBtn.className = `seg-btn ${isReg ? 'active' : ''}`;
+    nameField.classList.toggle('hidden', !isReg);
+    nameInput.required = isReg;
+    passInput.setAttribute('autocomplete', isReg ? 'new-password' : 'current-password');
+    submitBtn.textContent = isReg
+      ? state.needsAdminSetup
+        ? 'Создать администратора'
+        : 'Зарегистрироваться'
+      : 'Войти';
+    errBox.classList.add('hidden');
   }
-  state.authError = null;
-  state.authBusy = true;
-  renderAll();
-  try {
-    const cred = await firebaseAuthModule.signInWithPopup(state.auth, state.provider);
-    const token = await cred.user.getIdToken();
-    state.idToken = token;
-    await syncAccountWithToken(token);
-    await fetchStore();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : '';
-    if (!msg.includes('popup-closed-by-user')) {
-      state.authError = 'Не удалось выполнить вход. Разрешите всплывающие окна.';
+
+  loginTabBtn.addEventListener('click', () => {
+    mode = 'login';
+    syncMode();
+  });
+  regTabBtn.addEventListener('click', () => {
+    mode = 'register';
+    syncMode();
+  });
+
+  const form = el(
+    'form',
+    { className: 'form-stack' },
+    nameField,
+    el('div', null, el('label', { className: 'field-label' }, 'Email'), emailInput),
+    el('div', null, el('label', { className: 'field-label' }, 'Пароль'), passInput),
+    el(
+      'div',
+      { className: 'modal-actions' },
+      el('button', { type: 'button', className: 'btn-secondary', onClick: closeModal }, 'Отмена'),
+      submitBtn,
+    ),
+  );
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errBox.classList.add('hidden');
+    state.authError = null;
+    state.authBusy = true;
+    submitBtn.disabled = true;
+    submitBtn.textContent = mode === 'register' ? 'Регистрация...' : 'Вход...';
+
+    try {
+      const endpoint = mode === 'register' ? '/api/auth/register' : '/api/auth/login';
+      const payload =
+        mode === 'register'
+          ? {
+              displayName: nameInput.value.trim(),
+              email: emailInput.value.trim(),
+              password: passInput.value,
+            }
+          : {
+              email: emailInput.value.trim(),
+              password: passInput.value,
+            };
+
+      const data = await apiJson(endpoint, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      state.idToken = data.token;
+      state.account = data.account;
+      state.needsAdminSetup = false;
+      closeModal();
+      showToast(`Добро пожаловать, ${data.account.displayName || data.account.email}`);
+      await fetchStore();
+    } catch (err) {
+      errBox.textContent = err instanceof Error ? err.message : 'Не удалось выполнить вход.';
+      errBox.classList.remove('hidden');
+      syncMode();
+    } finally {
+      state.authBusy = false;
+      submitBtn.disabled = false;
     }
-  } finally {
-    state.authBusy = false;
-    renderAll();
-  }
+  });
+
+  syncMode();
+
+  openModal(
+    el(
+      'div',
+      { className: 'form-stack' },
+      el(
+        'div',
+        { style: 'display:flex; justify-content:space-between; align-items:center; gap:12px;' },
+        el('h3', { style: 'font-size:1.125rem; font-weight:600;' }, 'Аккаунт «Лапа и Дом»'),
+        el('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Закрыть', onClick: closeModal }, '×'),
+      ),
+      el('div', { className: 'segmented-bar' }, loginTabBtn, regTabBtn),
+      setupHint,
+      errBox,
+      form,
+    ),
+    true,
+    'Вход и регистрация',
+  );
 }
 
 async function signOut() {
-  if (!state.auth || !firebaseAuthModule) return;
   state.authBusy = true;
   state.authError = null;
   renderAll();
   try {
-    await firebaseAuthModule.signOut(state.auth);
     state.idToken = null;
     state.account = null;
     state.customerPreview = false;
     state.activeTab = 'catalog';
+    state.orders = [];
+    state.myOrders = [];
+    state.suppliers = [];
+    state.movements = [];
+    state.users = [];
     await fetchStore();
+    showToast('Вы вышли из аккаунта');
   } finally {
     state.authBusy = false;
     renderAll();
@@ -297,6 +409,8 @@ async function fetchStore() {
   renderAll();
   try {
     const data = await apiJson('/api/store');
+    state.account = data.account || null;
+    state.needsAdminSetup = Boolean(data.needsAdminSetup);
     state.products = data.products || [];
     state.suppliers = data.suppliers || [];
     state.orders = data.orders || [];
@@ -432,7 +546,7 @@ function renderNav() {
             type: 'button',
             disabled: state.authBusy,
             className: 'nav-link',
-            onClick: () => void signInWithGoogle(),
+            onClick: () => openAuthModal(state.needsAdminSetup ? 'register' : 'login'),
           },
           state.authBusy ? 'Вход...' : 'Войти',
         ),
@@ -543,9 +657,9 @@ function renderAccountBar() {
           type: 'button',
           disabled: state.authBusy,
           className: 'btn-secondary btn-sm',
-          onClick: () => void signInWithGoogle(),
+          onClick: () => openAuthModal(state.needsAdminSetup ? 'register' : 'login'),
         },
-        state.authBusy ? 'Вход...' : 'Войти через Google',
+        state.needsAdminSetup ? 'Создать администратора' : 'Войти / Регистрация',
       ),
     );
   } else {
@@ -2445,16 +2559,16 @@ function renderCart() {
         'div',
         { className: 'table-card', style: 'padding:16px; background:#fafafa; display:flex; flex-direction:column; gap:10px;' },
         el('h3', { style: 'font-size:0.875rem; font-weight:600;' }, 'Войдите в аккаунт для оформления заказа'),
-        el('p', { style: 'font-size:0.75rem; color:var(--ink-secondary); line-height:1.5;' }, `Выбрано товаров на сумму ${formatRub(subtotal)}. Войдите через Google, чтобы подтвердить заказ и адрес доставки.`),
+        el('p', { style: 'font-size:0.75rem; color:var(--ink-secondary); line-height:1.5;' }, `Выбрано товаров на сумму ${formatRub(subtotal)}. Войдите или зарегистрируйтесь, чтобы подтвердить заказ и адрес доставки.`),
         el(
           'button',
           {
             type: 'button',
             className: 'btn-primary',
             disabled: state.authBusy,
-            onClick: () => void signInWithGoogle(),
+            onClick: () => openAuthModal(state.needsAdminSetup ? 'register' : 'login'),
           },
-          state.authBusy ? 'Выполняется вход...' : 'Войти через Google',
+          state.needsAdminSetup ? 'Создать аккаунт и оформить' : 'Войти или зарегистрироваться',
         ),
       ),
     );
@@ -2719,57 +2833,6 @@ function renderAll() {
 }
 
 // --- Bootstrap ---
-async function initFirebaseAuth() {
-  try {
-    const [firebaseConfig, appMod, authMod] = await Promise.all([
-      apiJson('/api/firebase-config'),
-      import('/vendor/firebase-app.js'),
-      import('/vendor/firebase-auth.js'),
-    ]);
-    firebaseAuthModule = authMod;
-    const firebaseApp = appMod.initializeApp(firebaseConfig);
-    state.auth = authMod.getAuth(firebaseApp);
-    state.provider = new authMod.GoogleAuthProvider();
-
-    let firstAuthEvent = true;
-    authMod.onIdTokenChanged(state.auth, async (user) => {
-      state.firebaseUser = user;
-      if (!user) {
-        const hadAccount = Boolean(state.account);
-        state.idToken = null;
-        state.account = null;
-        state.customerPreview = false;
-        state.activeTab = 'catalog';
-        state.authReady = true;
-        if (!firstAuthEvent || hadAccount) {
-          await fetchStore();
-        } else {
-          renderAll();
-        }
-        firstAuthEvent = false;
-        return;
-      }
-
-      firstAuthEvent = false;
-      try {
-        const token = await user.getIdToken();
-        state.idToken = token;
-        await syncAccountWithToken(token);
-      } catch (err) {
-        console.error('Auth sync error:', err);
-        state.account = null;
-      } finally {
-        state.authReady = true;
-        await fetchStore();
-      }
-    });
-  } catch (err) {
-    console.error('Firebase init failed:', err);
-    state.authReady = true;
-    renderAccountBar();
-  }
-}
-
 async function init() {
   document.getElementById('brandBtn').addEventListener('click', () => setActiveTab('catalog'));
   document.getElementById('openCartBtn').addEventListener('click', openCart);
@@ -2790,9 +2853,7 @@ async function init() {
 
   state.authReady = true;
   renderAll();
-
   await fetchStore();
-  void initFirebaseAuth();
 }
 
 window.addEventListener('error', (event) => {

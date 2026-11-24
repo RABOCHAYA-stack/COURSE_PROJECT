@@ -11,27 +11,28 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 
 const REQUIRED_FILES = [
   'server.js',
+  'lib/auth.js',
   'lib/db.js',
-  'lib/firebase-admin.js',
   'middleware/auth.js',
   'public/index.html',
   'public/app.js',
   'public/styles.css',
   'sql/schema.sql',
+  'sql/seed.sql',
 ];
 
 const JS_CHECK_FILES = [
   'bin/lapa-i-dom.js',
   'server.js',
+  'lib/auth.js',
   'lib/db.js',
-  'lib/firebase-admin.js',
   'middleware/auth.js',
   'public/app.js',
 ];
 
 function printHelp() {
   console.log(`
-Лапа и Дом — запуск приложения (HTML + CSS + JS + SQL)
+Лапа и Дом — запуск приложения (HTML + CSS + JS + локальный SQL)
 
 Использование:
   start.bat [опции]          (Windows)
@@ -40,8 +41,8 @@ function printHelp() {
 Опции:
   -p, --port <номер>   Порт HTTP-сервера (по умолчанию 3000 или PORT из .env)
       --check          Проверить окружение, файлы проекта и синтаксис JS
-      --init-db        Инициализировать таблицы PostgreSQL и начальные данные
-      --with-init      Сначала применить схему БД, затем запустить сервер
+      --init-db        Создать локальный файл SQLite (data/petshop.sqlite) и наполнить данными
+      --with-init      Сначала проверить локальную БД, затем запустить сервер
   -v, --version        Показать версию пакета
   -h, --help           Показать эту справку
 `);
@@ -137,75 +138,12 @@ function runSyntaxChecks() {
   }
 }
 
-function resolveSqlPort() {
-  const port = Number(process.env.SQL_PORT);
-  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 5432;
-}
-
 async function initDatabase() {
-  const { default: pg } = await import('pg');
-  const host = process.env.SQL_HOST || '127.0.0.1';
-  const port = resolveSqlPort();
-  const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER || 'postgres';
-  const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD;
-  const dbName = process.env.SQL_DB_NAME || 'petshop';
-  const schemaSql = fs.readFileSync(path.join(ROOT_DIR, 'sql/schema.sql'), 'utf8');
-
-  let adminPool = new pg.Pool({
-    host,
-    port,
-    user,
-    password,
-    database: dbName,
-    max: 2,
-    connectionTimeoutMillis: 15000,
-  });
-
-  try {
-    try {
-      await adminPool.query(schemaSql);
-    } catch (err) {
-      if (err && err.code === '3D000') {
-        if (!/^[a-zA-Z0-9_]{1,63}$/.test(dbName)) {
-          throw new Error(`Недопустимое имя базы данных: ${dbName}`);
-        }
-        await adminPool.end();
-        const maintPool = new pg.Pool({
-          host,
-          port,
-          user,
-          password,
-          database: 'postgres',
-          max: 1,
-          connectionTimeoutMillis: 15000,
-        });
-        try {
-          await maintPool.query(`CREATE DATABASE "${dbName}"`);
-        } finally {
-          await maintPool.end();
-        }
-        adminPool = new pg.Pool({
-          host,
-          port,
-          user,
-          password,
-          database: dbName,
-          max: 2,
-          connectionTimeoutMillis: 15000,
-        });
-        await adminPool.query(schemaSql);
-      } else {
-        throw err;
-      }
-    }
-  } finally {
-    await adminPool.end();
-  }
-
   const dbUrl = pathToFileURL(path.join(ROOT_DIR, 'lib/db.js')).href;
   const { ensureSeeded } = await import(dbUrl);
   await ensureSeeded();
-  console.log(`База данных PostgreSQL (${dbName}) готова: таблицы и начальные данные проверены.`);
+  const dbTarget = process.env.SQLITE_DB_PATH?.trim() || 'data/petshop.sqlite';
+  console.log(`Локальная база данных SQLite (${dbTarget}) готова: таблицы и начальные данные проверены.`);
 }
 
 async function main() {
@@ -253,9 +191,7 @@ async function main() {
   console.log(`Лапа и Дом v${readPackageVersion()}`);
   console.log(`Запуск сервера: http://localhost:${port}`);
   console.log(`Проверка состояния: http://localhost:${port}/api/health`);
-  if (!process.env.SQL_HOST && !fs.existsSync(path.join(ROOT_DIR, '.env'))) {
-    console.log('Внимание: не задан .env — ожидается локальный PostgreSQL на 127.0.0.1:5432.');
-  }
+  console.log(`Локальная база данных: ${process.env.SQLITE_DB_PATH?.trim() || 'data/petshop.sqlite'}`);
 
   const child = spawn(process.execPath, [path.join(ROOT_DIR, 'server.js')], {
     cwd: ROOT_DIR,

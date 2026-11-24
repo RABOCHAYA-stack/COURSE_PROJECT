@@ -9,15 +9,11 @@ if errorlevel 1 goto :cd_err
 where node >nul 2>&1
 if errorlevel 1 goto :no_node
 
-if exist "node_modules\express\package.json" goto :check_env
+if exist "node_modules\express\package.json" if exist "node_modules\sql.js\package.json" goto :run_app
 
 echo [Lapa i Dom] Installing dependencies (npm install)...
 call npm.cmd install
 if errorlevel 1 goto :npm_err
-
-:check_env
-if exist ".env" goto :run_app
-if exist ".env.example" echo [Lapa i Dom] Tip: copy .env.example to .env and configure SQL_HOST, SQL_DB_NAME, SQL_USER, SQL_PASSWORD.
 
 :run_app
 node "bin\lapa-i-dom.js" %*

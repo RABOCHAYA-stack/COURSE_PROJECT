@@ -1,5 +1,5 @@
-import { adminAuth } from '../lib/firebase-admin.js';
-import { getOrCreateUser } from '../lib/db.js';
+import { verifySessionToken } from '../lib/auth.js';
+import { getUserByUid } from '../lib/db.js';
 
 export async function optionalAuth(req, _res, next) {
   const authHeader = req.headers.authorization;
@@ -15,15 +15,16 @@ export async function optionalAuth(req, _res, next) {
   }
 
   try {
-    const decoded = await adminAuth.verifyIdToken(token);
-    req.user = decoded;
-    req.account = await getOrCreateUser(
-      decoded.uid,
-      decoded.email || '',
-      typeof decoded.name === 'string' ? decoded.name : '',
-    );
-  } catch (err) {
-    console.warn('Optional auth token verification failed:', err);
+    const payload = verifySessionToken(token);
+    if (payload) {
+      const account = await getUserByUid(payload.uid);
+      if (account) {
+        req.user = payload;
+        req.account = account;
+      }
+    }
+  } catch {
+    // Optional auth leaves request unauthenticated when token is invalid
   }
   next();
 }
@@ -41,18 +42,24 @@ export async function requireAuth(req, res, next) {
     return;
   }
 
+  const payload = verifySessionToken(token);
+  if (!payload) {
+    res.status(401).json({ error: 'Сессия недействительна. Войдите снова.' });
+    return;
+  }
+
   try {
-    const decoded = await adminAuth.verifyIdToken(token);
-    req.user = decoded;
-    req.account = await getOrCreateUser(
-      decoded.uid,
-      decoded.email || '',
-      typeof decoded.name === 'string' ? decoded.name : '',
-    );
+    const account = await getUserByUid(payload.uid);
+    if (!account) {
+      res.status(401).json({ error: 'Учётная запись не найдена. Войдите снова.' });
+      return;
+    }
+    req.user = payload;
+    req.account = account;
     next();
   } catch (error) {
-    console.error('Error verifying Firebase ID token:', error);
-    res.status(401).json({ error: 'Сессия недействительна. Войдите снова.' });
+    console.error('Error loading account during auth:', error);
+    res.status(500).json({ error: 'Ошибка проверки учётной записи.' });
   }
 }
 

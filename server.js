@@ -1,22 +1,24 @@
 import 'dotenv/config';
 import express from 'express';
-import fs from 'node:fs';
 import path from 'node:path';
-import { publicFirebaseConfig } from './lib/firebase-admin.js';
+import { hashPassword, issueSessionToken, verifyPassword } from './lib/auth.js';
 import { optionalAuth, requireAdmin, requireAuth } from './middleware/auth.js';
 import {
   adjustProductStock,
+  authenticateUser,
   createOrder,
   createProduct,
   createSupplier,
   deleteProduct,
   deleteSupplier,
+  hasAdminUser,
   listAllUsers,
   listOrders,
   listOrdersByUser,
   listProducts,
   listStockMovements,
   listSuppliers,
+  registerUser,
   updateOrderStatus,
   updateProduct,
   updateSupplier,
@@ -83,35 +85,79 @@ app.use((_req, res, next) => {
 });
 app.use(express.json({ limit: '1mb' }));
 
-// Static frontend assets (pure HTML, CSS, JS, images) and local Firebase browser SDK
-const FIREBASE_AUTH_PATH = path.resolve(process.cwd(), 'node_modules/firebase/firebase-auth.js');
-let cachedFirebaseAuthJs = null;
+// Static frontend assets (pure HTML, CSS, JS, images)
+app.use(express.static(path.resolve(process.cwd(), 'public')));
 
-app.get('/vendor/firebase-auth.js', (_req, res, next) => {
+// --- API: Health & Local Authentication ---
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'lapa-i-dom',
+    storage: 'sqlite',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+app.post('/api/auth/register', async (req, res) => {
+  const email = sanitizeText(req.body?.email, 120).toLowerCase();
+  const displayName = sanitizeText(req.body?.displayName, 80);
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+  if (!displayName || displayName.length < 2) {
+    res.status(400).json({ error: 'Укажите имя (не короче 2 символов).' });
+    return;
+  }
+  if (!email || !isValidEmail(email)) {
+    res.status(400).json({ error: 'Укажите корректный email.' });
+    return;
+  }
+  if (password.length < 6 || password.length > 128) {
+    res.status(400).json({ error: 'Пароль должен содержать от 6 до 128 символов.' });
+    return;
+  }
+
   try {
-    if (!cachedFirebaseAuthJs) {
-      const raw = fs.readFileSync(FIREBASE_AUTH_PATH, 'utf8');
-      cachedFirebaseAuthJs = raw.replace(
-        /https:\/\/www\.gstatic\.com\/firebasejs\/[^/]+\/firebase-app\.js/g,
-        '/vendor/firebase-app.js',
-      );
-    }
-    res.type('application/javascript; charset=utf-8').send(cachedFirebaseAuthJs);
+    const passwordHash = hashPassword(password);
+    const account = await registerUser({ email, displayName, passwordHash });
+    const token = issueSessionToken(account);
+    res.status(201).json({ token, account });
   } catch (err) {
-    next(err);
+    if (err instanceof Error && err.message === 'EMAIL_EXISTS') {
+      res.status(409).json({ error: 'Пользователь с таким email уже зарегистрирован.' });
+      return;
+    }
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Не удалось зарегистрировать аккаунт.',
+    });
   }
 });
 
-app.use('/vendor', express.static(path.resolve(process.cwd(), 'node_modules/firebase')));
-app.use(express.static(path.resolve(process.cwd(), 'public')));
+app.post('/api/auth/login', async (req, res) => {
+  const email = sanitizeText(req.body?.email, 120).toLowerCase();
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
-// --- API: Health & Public Firebase client config ---
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'lapa-i-dom', timestamp: new Date().toISOString() });
-});
+  if (!email || !password) {
+    res.status(400).json({ error: 'Введите email и пароль.' });
+    return;
+  }
 
-app.get('/api/firebase-config', (_req, res) => {
-  res.json(publicFirebaseConfig);
+  try {
+    const record = await authenticateUser(email);
+    if (!record || !verifyPassword(password, record.passwordHash)) {
+      res.status(401).json({ error: 'Неверный email или пароль.' });
+      return;
+    }
+    const token = issueSessionToken(record.user);
+    res.json({ token, account: record.user });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Не удалось выполнить вход.',
+    });
+  }
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
@@ -166,7 +212,10 @@ app.patch('/api/users/:id/role', requireAuth, requireAdmin, async (req, res) => 
 app.get('/api/store', optionalAuth, async (req, res) => {
   try {
     const isAdmin = req.account?.role === 'admin';
-    const catalogProducts = await listProducts(isAdmin);
+    const [catalogProducts, adminExists] = await Promise.all([
+      listProducts(isAdmin),
+      hasAdminUser(),
+    ]);
 
     if (isAdmin) {
       const [allSuppliers, allOrders, myOrders, allMovements, allUsers] = await Promise.all([
@@ -178,6 +227,7 @@ app.get('/api/store', optionalAuth, async (req, res) => {
       ]);
       res.json({
         account: req.account,
+        needsAdminSetup: !adminExists,
         products: catalogProducts,
         suppliers: allSuppliers,
         orders: allOrders,
@@ -191,6 +241,7 @@ app.get('/api/store', optionalAuth, async (req, res) => {
     const myOrders = req.account ? await listOrdersByUser(req.account.uid) : [];
     res.json({
       account: req.account ?? null,
+      needsAdminSetup: !adminExists,
       products: catalogProducts,
       suppliers: [],
       orders: [],

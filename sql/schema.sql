@@ -1,29 +1,31 @@
--- Схема базы данных PostgreSQL для зоомагазина «Лапа и Дом»
+-- Схема локальной базы данных SQLite для зоомагазина «Лапа и Дом»
+PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (
-  id SERIAL PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   uid TEXT NOT NULL UNIQUE,
-  email TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('admin', 'customer')),
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS suppliers (
-  id SERIAL PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   contact_person TEXT NOT NULL,
   phone TEXT NOT NULL,
   email TEXT NOT NULL,
   city TEXT NOT NULL,
   lead_time_days INTEGER NOT NULL DEFAULT 2,
-  categories JSONB NOT NULL,
+  categories TEXT NOT NULL,
   notes TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS products (
-  id SERIAL PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   sku TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   category TEXT NOT NULL CHECK (category IN ('animals', 'supplies', 'food', 'care', 'treats', 'medicine')),
@@ -37,11 +39,11 @@ CREATE TABLE IF NOT EXISTS products (
   description TEXT NOT NULL DEFAULT '',
   specs TEXT NOT NULL DEFAULT '',
   image_url TEXT NOT NULL,
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS orders (
-  id SERIAL PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_number TEXT NOT NULL UNIQUE,
   user_uid TEXT NOT NULL REFERENCES users(uid),
   customer_name TEXT NOT NULL,
@@ -50,11 +52,11 @@ CREATE TABLE IF NOT EXISTS orders (
   payment_method TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'В обработке' CHECK (status IN ('В обработке', 'Выполнен', 'Доставлен', 'Отменён')),
   total_amount INTEGER NOT NULL CHECK (total_amount >= 0),
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS order_items (
-  id SERIAL PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id),
   sku TEXT NOT NULL,
@@ -66,7 +68,7 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 
 CREATE TABLE IF NOT EXISTS stock_movements (
-  id SERIAL PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   product_id INTEGER NOT NULL REFERENCES products(id),
   product_name TEXT NOT NULL,
   sku TEXT NOT NULL,
@@ -76,5 +78,5 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   supplier_id INTEGER REFERENCES suppliers(id),
   supplier_name TEXT,
   note TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
