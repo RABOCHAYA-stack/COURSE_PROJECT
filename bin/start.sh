@@ -14,4 +14,4 @@ if [ ! -d "$ROOT_DIR/node_modules" ]; then
   npm --prefix "$ROOT_DIR" install
 fi
 
-exec node "$ROOT_DIR/bin/lapa-i-dom" "$@"
+exec node "$ROOT_DIR/bin/lapa-i-dom.js" "$@"

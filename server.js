@@ -771,6 +771,15 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Внутренняя ошибка сервера.' });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on http://localhost:${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`Порт ${PORT} уже занят. Укажите другой порт: start.bat --port ${PORT + 1}`);
+  } else {
+    console.error('Ошибка запуска HTTP-сервера:', err instanceof Error ? err.message : String(err));
+  }
+  process.exit(1);
 });
