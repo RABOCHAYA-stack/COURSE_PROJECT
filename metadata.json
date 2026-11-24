@@ -1,0 +1,6 @@
+{
+  "name": "Лапа и Дом — Зоомагазин и учёт товаров",
+  "description": "Зоомаркет с каталогом животных, кормов, лакомств, лекарств, средств ухода, учётом остатков, историей покупок и поставщиками.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
