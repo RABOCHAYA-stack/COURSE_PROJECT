@@ -1,65 +1,47 @@
 # Лапа и Дом — Зоомагазин и учёт товаров
 
-Полнофункциональное веб-приложение зоомагазина (React + Vite + Express + PostgreSQL + Drizzle ORM + Firebase Authentication).
+Полнофункциональное веб-приложение зоомагазина на **HTML, CSS, чистом JavaScript (ESM + Express) и SQL (PostgreSQL)** с авторизацией через Firebase Authentication и исполняемой бинкой запуска `bin/lapa-i-dom`.
 
 ## Структура проекта
 
 ```text
-├── server.ts                        # Сервер Express API и интеграция Vite / static dist
-├── index.html                       # Точка входа HTML и шрифты
-├── package.json                     # Зависимости и скрипты запуска
-├── tsconfig.json                    # Настройки TypeScript
-├── vite.config.ts                   # Конфигурация Vite + Tailwind CSS v4
-├── firebase-applet-config.json      # Конфигурация Firebase Auth для клиента и сервера
-├── .env.example                     # Шаблон переменных окружения
-└── src/
-    ├── main.tsx                     # Монтирование React и AuthProvider
-    ├── App.tsx                      # Основное приложение и маршрутизация по ролям
-    ├── index.css                    # Глобальные стили Tailwind CSS v4
-    ├── types.ts                     # Общие TypeScript-типы и справочник категорий
-    ├── assets/images/               # Графические ассеты категорий и баннера
-    ├── contexts/
-    │   └── AuthContext.tsx          # Вход через Google и хранение ID-токена в памяти
-    ├── lib/
-    │   ├── firebase.ts              # Клиентский SDK Firebase Auth
-    │   └── firebase-admin.ts        # Серверный Firebase Admin SDK для проверки токенов
-    ├── middleware/
-    │   └── auth.ts                  # Middleware проверки токена и роли (admin / customer)
-    ├── db/
-    │   ├── schema.ts                # Схема PostgreSQL (users, suppliers, products, orders, order_items, stock_movements)
-    │   ├── index.ts                 # Пул подключений pg и экземпляр Drizzle ORM
-    │   ├── drizzle.config.ts        # Конфигурация Drizzle Kit
-    │   ├── users.ts                 # Работа с аккаунтами и ролями пользователей
-    │   └── repository.ts            # Запросы, транзакции заказов и начальное заполнение БД
-    ├── utils/
-    │   └── format.ts                # Форматирование валюты, дат и статусов остатков
-    └── components/
-        ├── CatalogView.tsx          # Витрина, фильтры по 6 категориям и видам животных
-        ├── CartDrawer.tsx           # Корзина и оформление заказа
-        ├── InventoryView.tsx        # Склад, остатки, приёмка, списание и журнал движения
-        ├── OrdersView.tsx           # История покупок, чеки и статусы заказов
-        ├── SuppliersView.tsx        # Поставщики и оформление поставок на склад
-        ├── AccountsView.tsx         # Управление ролями пользователей (администратор)
-        └── ResilientImage.tsx       # Изображения с резервной заглушкой при ошибке
+├── bin/
+│   ├── lapa-i-dom                   # Исполняемый CLI-бинарник запуска (--port, --check, --init-db)
+│   └── start.sh                     # Bash-обёртка для запуска в один клик
+├── server.js                        # Express-сервер (порт 3000), API и раздача статики
+├── package.json                     # Зависимости (express, pg, firebase, firebase-admin, dotenv) и bin
+├── firebase-applet-config.json      # Конфигурация Firebase Auth
+├── .env.example                     # Шаблон переменных окружения PostgreSQL
+├── sql/
+│   ├── schema.sql                   # SQL-схема таблиц (users, suppliers, products, orders, order_items, stock_movements)
+│   └── seed.sql                     # Начальное наполнение каталога, поставщиков и заказов
+├── lib/
+│   ├── db.js                        # Пул pg, ленивое создание схемы и параметризованные SQL-транзакции
+│   └── firebase-admin.js            # Серверная проверка Firebase ID-токенов
+├── middleware/
+│   └── auth.js                      # Проверка токенов и ролей (admin / customer)
+└── public/
+    ├── index.html                   # Страница приложения и importmap для локального Firebase SDK
+    ├── styles.css                   # Стили интерфейса и адаптивная вёрстка
+    ├── app.js                       # Клиентская логика на чистом JavaScript (DOM API)
+    └── images/                      # Графические ассеты категорий и баннера
 ```
 
-## Локальный запуск
+## Запуск через бинку
 
 1. Установите зависимости:
    ```bash
    npm install
    ```
-2. Скопируйте `.env.example` в `.env` и заполните параметры подключения к PostgreSQL (`SQL_HOST`, `SQL_DB_NAME`, `SQL_USER`, `SQL_PASSWORD`, `SQL_ADMIN_USER`, `SQL_ADMIN_PASSWORD`).
-3. Примените схему таблиц в PostgreSQL:
+2. Скопируйте `.env.example` в `.env` и заполните параметры подключения к PostgreSQL (`SQL_HOST`, `SQL_DB_NAME`, `SQL_USER`, `SQL_PASSWORD`).
+3. Проверьте окружение и синтаксис:
    ```bash
-   npx drizzle-kit push --config=src/db/drizzle.config.ts
+   ./bin/lapa-i-dom --check
    ```
-4. Запустите сервер разработки на порту `3000`:
+4. Запустите приложение через бинку (или `./bin/start.sh`):
    ```bash
-   npm run dev
+   ./bin/lapa-i-dom
+   # или на другом порту с автоматической проверкой схемы БД:
+   ./bin/lapa-i-dom --with-init --port 3000
    ```
-5. Для production-сборки:
-   ```bash
-   npm run build
-   NODE_ENV=production npm start
-   ```
+   Также доступен стандартный запуск через npm: `npm run dev` или `npm start`.

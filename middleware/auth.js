@@ -1,19 +1,7 @@
-import type { NextFunction, Request, Response } from 'express';
-import type { DecodedIdToken } from 'firebase-admin/auth';
-import { adminAuth } from '../lib/firebase-admin.ts';
-import { getOrCreateUser } from '../db/users.ts';
-import type { UserAccount } from '../types.ts';
+import { adminAuth } from '../lib/firebase-admin.js';
+import { getOrCreateUser } from '../lib/db.js';
 
-export interface AuthRequest extends Request {
-  user?: DecodedIdToken;
-  account?: UserAccount;
-}
-
-export async function optionalAuth(
-  req: AuthRequest,
-  _res: Response,
-  next: NextFunction,
-): Promise<void> {
+export async function optionalAuth(req, _res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     next();
@@ -31,7 +19,7 @@ export async function optionalAuth(
     req.user = decoded;
     req.account = await getOrCreateUser(
       decoded.uid,
-      decoded.email ?? '',
+      decoded.email || '',
       typeof decoded.name === 'string' ? decoded.name : '',
     );
   } catch (err) {
@@ -40,11 +28,7 @@ export async function optionalAuth(
   next();
 }
 
-export async function requireAuth(
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
+export async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Требуется вход в аккаунт.' });
@@ -62,7 +46,7 @@ export async function requireAuth(
     req.user = decoded;
     req.account = await getOrCreateUser(
       decoded.uid,
-      decoded.email ?? '',
+      decoded.email || '',
       typeof decoded.name === 'string' ? decoded.name : '',
     );
     next();
@@ -72,11 +56,7 @@ export async function requireAuth(
   }
 }
 
-export function requireAdmin(
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction,
-): void {
+export function requireAdmin(req, res, next) {
   if (!req.account) {
     res.status(401).json({ error: 'Требуется вход в аккаунт.' });
     return;
